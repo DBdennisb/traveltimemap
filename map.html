@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>Châtelet Travel Time Map</title>
+
+  <!-- Leaflet CSS and JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.0.3/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.0.3/dist/leaflet-src.js" crossorigin=""></script>
+
+  <!-- Targomo Leaflet full build -->
+  <script src="https://releases.targomo.com/leaflet/latest-full.min.js"></script>
+
+  <!-- D3 for colors -->
+  <script src="https://d3js.org/d3-color.v1.min.js"></script>
+  <script src="https://d3js.org/d3-interpolate.v1.min.js"></script>
+  <script src="https://d3js.org/d3-scale-chromatic.v1.min.js"></script>
+
+  <!-- Micro progress bar -->
+  <script src="https://www.targomo.com/developers/scripts/mipb.min.js"></script>
+
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; }
+    #map { width: 100%; height: 100%; }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+
+  <script>
+    async function initMap() {
+      // --- Targomo client ---
+      const client = new tgm.TargomoClient('britishisles', 'DW87ABTCFSBIPSZETTNH');
+
+      // --- Progress bar ---
+      const pBar = new mipb({ fg: "#FF8319", style: { zIndex: 500 } });
+      pBar.show();
+
+      // --- Source point: Châtelet ---
+      const sourcePoint = { id: 0, lat: 50.421497768229486, lng: 4.5388198383809355 };
+
+      // --- Max travel time: 90 minutes = 5400 seconds ---
+      const maxTime = 5400;
+
+      // --- Basemap ---
+      const tileLayer = new tgm.leaflet.TgmLeafletTileLayer(client, 'Dark');
+      const map = L.map('map', { layers: [tileLayer], scrollWheelZoom: false })
+                   .setView([sourcePoint.lat, sourcePoint.lng], 12);
+
+      const attributionText = '<a href="https://www.targomo.com/developers/resources/attribution/" target="_blank">&copy; Targomo</a>';
+      map.attributionControl.addAttribution(attributionText);
+
+      // --- Source marker ---
+      L.marker([sourcePoint.lat, sourcePoint.lng], { zIndexOffset: 1000 }).addTo(map);
+
+      // --- Your addresses ---
+      const addresses = [
+        "Nederstraat 21, Oudenaarde, Belgium",
+        "Stokveldelaan 19, Sint-Michiels, Belgium",
+        "Malehoeklaan 30, Sint-Kruis, Belgium",
+        "Tieltsesteenweg, 104, Eeklo, Belgium",
+        "Gustaaf Papestraat 38, Aalst, Belgium",
+        "Leegstraat 117, Oostrozebeke, Belgium",
+        "Klein Katrol 16, Harelbeke, Belgium",
+        "Sint-Lenardsstraat 19, Brugge, Belgium",
+        "Schoolstraat 14, Izegem, Belgium"
+      ];
+
+      // --- Function to geocode addresses using Nominatim ---
+      async function geocodeAddress(address) {
+        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.length > 0) {
+          return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+        }
+        return null;
+      }
+
+      // --- Convert addresses to targets ---
+      const targets = [];
+      for (let i = 0; i < addresses.length; i++) {
+        const coord = await geocodeAddress(addresses[i]);
+        if (coord) {
+          targets.push({ id: i+1, lat: coord.lat, lng: coord.lng, address: addresses[i] });
+        }
+      }
+
+      // --- Calculate travel times ---
+      const options = { travelType: 'car', maxEdgeWeight: maxTime, edgeWeight: 'time' };
+      const reachability = await client.reachability.individual([sourcePoint], targets, options);
+
+      // --- Assign travel times ---
+      targets.forEach(t => {
+        const match = reachability[0].targets.find(r => r.id === t.id);
+        t.travelTime = match ? match.travelTime : -1;
+      });
+
+      pBar.hide();
+
+      // --- Add points to map with color based on travel time ---
+      targets.forEach(t => {
+        const scaleVal = t.travelTime > -1 ? 1 - (t.travelTime / maxTime) : 0;
+        const rgb = d3.rgb(d3.interpolateRdYlGn(scaleVal));
+        L.circleMarker([t.lat, t.lng], {
+          radius: 6,
+          fillColor: t.travelTime > -1 ? rgb : '#666',
+          color: "#000",
+          weight: 0.5,
+          opacity: 1,
+          fillOpacity: 1
+        }).bindPopup(`<strong>${t.address}</strong><br>Travel time: ${t.travelTime > -1 ? Math.round(t.travelTime/60) + ' min' : 'not reachable'}`)
+          .addTo(map);
+      });
+    }
+
+    initMap();
+  </script>
+</body>
+
+</html>
